@@ -1,142 +1,196 @@
 "use strict";
 
-const fs = require('fs')
-const parser = require('solidity-parser-antlr')
-const sha1File = require('sha1-file')
+const fs = require('fs');
+const parser = require('@solidity-parser/parser');
+const sha1File = require('sha1-file');
+const importer = require('../lib/utils/importer');
 
 export function mdreport(infiles, options = {}) {
+  let content = '';
+
   if (infiles.length === 0) {
-    console.log('No files were specified for analysis in the arguments. Bailing...')
-    return
+    throw new Error(`\nNo files were specified for analysis in the arguments. Bailing...\n`);
   }
+
+  var modifiers = []
+  var added = []
 
   let filesTable = `
 |  File Name  |  SHA-1 Hash  |
 |-------------|--------------|
-`
+`;
 
   let contractsTable = `
 |  Contract  |         Type        |       Bases      |                  |                 |
 |:----------:|:-------------------:|:----------------:|:----------------:|:---------------:|
 |     └      |  **Function Name**  |  **Visibility**  |  **Mutability**  |  **Modifiers**  |
-`
+`;
 
-  // make the files array unique by typecastign them to a Set and back
-  // this is not needed in case the importer flag is on, because the 
+  // make the files array unique by typecasting them to a Set and back
+  // this is not needed in case the importer flag is on, because the
   // importer module already filters the array internally
-  if(options.importer) {
-    infiles = importer.importProfiler(infiles)
+  if(!options.contentsInFilePath && options.importer) {
+    infiles = importer.importProfiler(infiles);
   } else {
     infiles = [...new Set(infiles)];
   }
 
   for (let file of infiles) {
     filesTable += `| ${file} | ${sha1File(file)} |
-`
+`;
 
-    const content = fs.readFileSync(file).toString('utf-8')
-    const ast = parser.parse(content)
-    var isPublic = false
-    var doesModifierExist = false
+    if(!options.contentsInFilePath) {
+      try {
+        content = fs.readFileSync(file).toString('utf-8');
+      } catch (e) {
+        if (e.code === 'EISDIR') {
+          console.error(`Skipping directory ${file}`);
+          continue;
+        } else {
+          throw e;
+        }
+      }
+    } else {
+      content = file;
+    }
+
+    const ast = (() => {
+      try {
+        return parser.parse(content);
+      } catch (err) {
+        if(!options.contentsInFilePath) {
+          console.error(`\nError found while parsing the following file: ${file}\n`);
+        } else {
+          console.error(`\nError found while parsing one of the provided files\n`);
+        }
+        throw err;
+      }
+    })();
+
+    var isPublic = false;
+    var doesModifierExist = false;
     var isConstructor = false;
+
+    parser.visit(ast, {
+      ModifierInvocation: function ModifierInvocation(node){
+        if (modifiers.indexOf(node.name) == -1){
+          modifiers.push(node.name);
+        }
+      },
+      ModifierDefinition: function ModifierDefinition(node){
+        if (modifiers.indexOf(node.name) == -1){
+          modifiers.push(node.name);
+        }
+      }
+    });
 
     parser.visit(ast, {
       ContractDefinition(node) {
 
-        const name = node.name
+        const name = node.name;
         let bases = node.baseContracts.map(spec => {
-          return spec.baseName.namePath
-        }).join(', ')
+          return spec.baseName.namePath;
+        }).join(', ');
 
-        let specs = ''
+        let specs = '';
         if (node.kind === 'library') {
-          specs += 'Library'
+          specs += 'Library';
         } else if (node.kind === 'interface') {
-          specs += 'Interface'
+          specs += 'Interface';
         } else {
-          specs += 'Implementation'
+          specs += 'Implementation';
         }
 
         contractsTable += `||||||
 | **${name}** | ${specs} | ${bases} |||
-`
+`;
       },
 
       FunctionDefinition(node) {
-        let name
-        isPublic = false
-        doesModifierExist = false
-        isConstructor = false
+        let name;
+        isPublic = false;
+        doesModifierExist = false;
+        isConstructor = false;
 
         if (node.isConstructor) {
-          isConstructor = true
-          name = '\\<Constructor\\>'
-        } else if (!node.name) {
-          name = '\\<Fallback\\>'
+          name = '<Constructor>';
+        } else if (node.isFallback) {
+          name = '<Fallback>';
+        } else if (node.isReceiveEther) {
+          name = '<Receive Ether>';
         } else {
-          name = node.name
+          name = node.name;
         }
 
 
-        let spec = ''
+        let spec = '';
         if (node.visibility === 'public' || node.visibility === 'default') {
-          spec += 'Public ❗️'
-          isPublic = true
+          spec += 'Public ❗️';
+          isPublic = true;
         } else if (node.visibility === 'external') {
-          spec += 'External ❗️'
-          isPublic = true
+          spec += 'External ❗️';
+          isPublic = true;
         } else if (node.visibility === 'private') {
-          spec += 'Private 🔐'
+          spec += 'Private 🔐';
         } else if (node.visibility === 'internal') {
-          spec += 'Internal 🔒'
+          spec += 'Internal 🔒';
         }
 
-        let payable = ''
+        let payable = '';
         if (node.stateMutability === 'payable') {
-          payable = '💵'
+          payable = '💵';
         }
 
-        let mutating = ''
+        let mutating = '';
         if (!node.stateMutability) {
-          mutating = '🛑'
+          mutating = '🛑';
         }
 
-        contractsTable += `| └ | ${name} | ${spec} | ${mutating} ${payable} |`
+        contractsTable += `| └ | ${name} | ${spec} | ${mutating} ${payable} |`;
       },
 
       'FunctionDefinition:exit': function(node) {
         if (!isConstructor && isPublic && !doesModifierExist) {
-          contractsTable += 'NO❗️'
+          contractsTable += 'NO❗️';
+        }else if (isPublic && options.negModifiers){
+          for (var i = 0; i < modifiers.length; i++){
+              if (added.indexOf(modifiers[i]) == -1){
+                contractsTable += ' ~~'+modifiers[i]+'~~ ';
+              }
+            }
+          added = [];
         }
+
         contractsTable += ` |
-`
+`;
       },
 
       ModifierInvocation(node) {
-        doesModifierExist = true
-        contractsTable += ` ${node.name}`          
-        
+        doesModifierExist = true;
+        contractsTable += ` ${node.name}`;
+        added.push(node.name);
+
       }
-    })
+    });
   }
 
-  const reportContents = `## Sūrya's Description Report
+  const reportContents = `${'#'.repeat(options.deepness)} Sūrya's Description Report
 
-### Files Description Table
+${'#'.repeat(options.deepness + 1)} Files Description Table
 
 ${filesTable}
 
-### Contracts Description Table
+${'#'.repeat(options.deepness + 1)} Contracts Description Table
 
 ${contractsTable}
 
-### Legend
+${'#'.repeat(options.deepness + 1)} Legend
 
 |  Symbol  |  Meaning  |
 |:--------:|-----------|
 |    🛑    | Function can modify state |
 |    💵    | Function is payable |
-`
-  
-  return reportContents
+`;
+
+  return reportContents;
 }

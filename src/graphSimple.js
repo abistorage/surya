@@ -10,7 +10,7 @@ const importer = require('../lib/utils/importer');
 
 const {defaultColorScheme, defaultColorSchemeDark} = require('./utils/colorscheme');
 
-export function graph(files, options = {}) {
+export function graphSimple(files, options = {}) {
   if (files.length === 0) {
     throw new Error(`\nNo files were specified for analysis in the arguments. Bailing...\n`);
   }
@@ -43,11 +43,11 @@ export function graph(files, options = {}) {
   let stateVars = {};
   let dependencies = {};
   let fileASTs = [];
-  let functionsPerContract = {'0_global':[]};
-  let eventsPerContract = {'0_global':[]};
-  let structsPerContract = {'0_global':[]};
+  let functionsPerContract = {null:[]};
+  let eventsPerContract = {null:[]};
+  let structsPerContract = {null:[]};
   let contractUsingFor = {};
-  let contractNames = ['0_global'];
+  let contractNames = [];
 
   for (let file of files) {
 
@@ -82,19 +82,19 @@ export function graph(files, options = {}) {
 
     fileASTs.push(ast);
 
-    let contractName = '0_global';
-    let cluster = null;
+    let contractName = null;
+    let contractNode = null; // a digraph node representing a contract
 
     parser.visit(ast, {
       ContractDefinition(node) {
         contractName = node.name;
         contractNames.push(contractName);
-        
-        let kind="";
-        if (node.kind=="interface"){
-          kind="  (iface)";
-        } else if(node.kind=="library"){
-          kind="  (lib)";
+
+        let kind = "";
+        if (node.kind == "interface") {
+          kind = "  (iface)";
+        } else if (node.kind == "library") {
+          kind = "  (lib)";
         }
 
         userDefinedStateVars[contractName] = {};
@@ -104,41 +104,35 @@ export function graph(files, options = {}) {
         structsPerContract[contractName] = [];
         contractUsingFor[contractName] = {};
 
-        if(!(cluster = digraph.getCluster(`"cluster${contractName}"`))) {
-          cluster = digraph.addCluster(`"cluster${contractName}"`);
+        if (!(contractNode = digraph.getNode(contractName))) {
+          contractNode = digraph.addNode(contractName);
 
-          cluster.set('label', contractName + kind);
-          cluster.set('color', colorScheme.contract.defined.color);
-          if(colorScheme.contract.defined.fontcolor){
-            cluster.set('fontcolor', colorScheme.contract.undefined.fontcolor);
+          contractNode.set('label', contractName);
+          contractNode.set('color', colorScheme.contract.defined.color);
+          if (colorScheme.contract.defined.fontcolor) {
+            contractNode.set('fontcolor', colorScheme.contract.undefined.fontcolor);
           }
-          
+
           if (colorScheme.contract.defined.style) {
-            cluster.set('style', colorScheme.contract.defined.style || "filled");
-            cluster.set('bgcolor', colorScheme.contract.defined.color);
+            contractNode.set('style', colorScheme.contract.defined.style || "filled");
+            // contractNode.set('bgcolor', colorScheme.contract.defined.color);
           } else {
-            cluster.set('style', 'filled');
+            contractNode.set('style', 'filled');
           }
 
-          colorScheme.contract.defined.bgcolor && cluster.set('bgcolor', colorScheme.contract.defined.bgcolor);
+          // colorScheme.contract.defined.bgcolor && contractNode.set('bgcolor', colorScheme.contract.defined.bgcolor);
           
         } else {
           if (colorScheme.contract.defined.style) {
-            cluster.set('style', colorScheme.contract.defined.style);
+            contractNode.set('style', colorScheme.contract.defined.style);
           } else {
-            cluster.set('style', 'filled');
+            contractNode.set('style', 'filled');
           } 
         }
-        
+
         dependencies[contractName] = node.baseContracts.map(spec =>
           spec.baseName.namePath
         );
-
-        dependencies[contractName].unshift('0_global');
-      },
-
-      'ContractDefinition:exit': function(node) {
-        contractName = '0_global';
       },
 
       StateVariableDeclaration(node) {
@@ -183,90 +177,27 @@ export function graph(files, options = {}) {
 
   for (let ast of fileASTs) {
 
-    let contractName = '0_global';
+    let contractName = null;
     let cluster = null;
 
-    function nodeName(functionName, contractName) {
-      if (dependencies.hasOwnProperty(contractName)) {
-        for (let dep of dependencies[contractName]) {
-          const name = `${dep}.${functionName}`;
-          if (digraph.getNode(name)) {
-            return name;
-          }
-        }
-      }
-
-      return `${contractName}.${functionName}`;
-    }
-
-    function functionName(node) {
-      let name;
-      if (node.isConstructor) {
-        name = '<Constructor>';
-      } else if (node.isFallback) {
-        name = '<Fallback>';
-      } else if (node.isReceiveEther) {
-        name = '<Receive Ether>';
-      } else {
-        name = node.name;
-      }
-
-      return name;
-    }
-
+    // find all the contracts, and create anode for them
     parser.visit(ast, {
       ContractDefinition(node) {
-        contractName = node.name;
+        if (!(node = digraph.getNode(node.name))) {
+          node = digraph.addNode(node.name);
+          node.set('label', contractName);
+          node.set('color', colorScheme.contract.defined.color);
+          if (colorScheme.contract.defined.fontcolor) {
+            contranodectNode.set('fontcolor', colorScheme.contract.undefined.fontcolor);
+          }
 
-        cluster = digraph.getCluster(`"cluster${contractName}"`);
-      },
-
-      'ContractDefinition:exit': function(node) {
-        contractName = '0_global';
-      },
-
-      FunctionDefinition(node) {
-        const name = functionName(node);
-
-        let opts = { label: name };
-
-        if (node.visibility === 'public' || node.visibility === 'default') {
-          opts.color = colorScheme.visibility.public;
-        } else if (node.visibility === 'external') {
-          opts.color = colorScheme.visibility.external;
-        } else if (node.visibility === 'private') {
-          opts.color = colorScheme.visibility.private;
-        } else if (node.visibility === 'internal') {
-          opts.color = colorScheme.visibility.internal;
-        }
-
-        if(colorScheme.visibility.isFilled){
-          if(node.stateMutability==="payable"){
-            opts.fillcolor = opts.color;
-            opts.color = colorScheme.nodeType.payable;
+        if (colorScheme.contract.defined.style) {
+            node.set('style', colorScheme.contract.defined.style || "filled");
+            // contractNode.set('bgcolor', colorScheme.contract.defined.color);
           } else {
-            opts.fillcolor = opts.color;
+            node.set('style', 'filled');
           }
         }
-          
-        cluster.addNode(nodeName(name, contractName), opts);
-      },
-
-      ModifierDefinition(node) {
-        const name = node.name;
-
-        let opts = {
-          label: name,
-          color: colorScheme.nodeType.modifier
-        };
-        if(colorScheme.nodeType.isFilled){
-          opts.fillcolor = opts.color;
-        }
-        if(colorScheme.nodeType.shape){
-          opts.shape = colorScheme.nodeType.shape;
-        }
-
-        cluster.addNode(nodeName(name, contractName), opts);
       }
     });
 
@@ -276,11 +207,12 @@ export function graph(files, options = {}) {
     let tempUserDefinedStateVars = {};
     let tempStateVars = {};
     let eventDefinitions = [];
-
+    
     parser.visit(ast, {
+
       ContractDefinition(node) {
         contractName = node.name;
-
+        callingScope = contractName;
         for (let dep of dependencies[contractName]) {
           Object.assign(tempUserDefinedStateVars, userDefinedStateVars[dep]);
           Object.assign(tempStateVars, stateVars[dep]);
@@ -290,20 +222,15 @@ export function graph(files, options = {}) {
         Object.assign(tempStateVars, stateVars[contractName]);
       },
 
-      EventDefinition(node) {
-        eventDefinitions.push(node.name);
-      },
-
       'ContractDefinition:exit': function(node) {
-        contractName = '0_global'; 
+        contractName = null; 
         tempUserDefinedStateVars = {};
         tempStateVars = {};
       },
 
       FunctionDefinition(node) {
-        const name = functionName(node);
 
-        callingScope = nodeName(name, contractName);
+        callingScope = contractName;
       },
 
       'FunctionDefinition:exit': function(node) {
@@ -313,13 +240,14 @@ export function graph(files, options = {}) {
       },
 
       ModifierDefinition(node) {
-        callingScope = nodeName(node.name, contractName);
+        callingScope = contractName;
       },
 
       'ModifierDefinition:exit': function(node) {
         callingScope = null;
       },
 
+      // not sure what this is doing
       ParameterList(node) {
         for (let parameter of node.parameters) {
           if (parameter.name === null) {
@@ -331,7 +259,8 @@ export function graph(files, options = {}) {
           }
         }
       },
-
+      
+      // not sure what this is doing
       VariableDeclaration(node) {
         if (callingScope && node.name === null) {
           return;
@@ -346,11 +275,11 @@ export function graph(files, options = {}) {
         }
       },
 
-      ModifierInvocation(node) {
-        if (options.enableModifierEdges && callingScope) {
-          digraph.addEdge(callingScope, nodeName(node.name, contractName), { color: 'yellow' });
-        }
-      },
+      // ModifierInvocation(node) {
+      //   if (options.enableModifierEdges && callingScope) {
+      //     digraph.addEdge(callingScope, contractName);
+      //   }
+      // },
 
       FunctionCall(node) {
         if (!callingScope) {
@@ -365,7 +294,7 @@ export function graph(files, options = {}) {
         let opts = {
           color: colorScheme.call.default
         };
-
+        
         // Construct an array with the event and struct names in the whole dependencies tree of the current contract
         let eventsOfDependencies = [];
         let structsOfDependencies = [];
@@ -375,7 +304,7 @@ export function graph(files, options = {}) {
             structsOfDependencies = structsOfDependencies.concat(structsPerContract[dep]);
           }
         }
-        
+
         if(
           parserHelpers.isRegularFunctionCall(node, contractNames, eventsOfDependencies, structsOfDependencies)
         ) {
@@ -420,13 +349,19 @@ export function graph(files, options = {}) {
             // check if member access is a function of a "using for" declaration
             // START
             if(localVars.hasOwnProperty(object)) {
+              /** tin: Bail - ignore usingFor BaseType in simpleGraph
               variableType = localVars[object];
+              */
+              return;
             } else if(userDefinedLocalVars.hasOwnProperty(object)) {
               variableType = userDefinedLocalVars[object];
             } else if(tempUserDefinedStateVars.hasOwnProperty(object)) {
               variableType = tempUserDefinedStateVars[object];
             } else if(tempStateVars.hasOwnProperty(object)) {
+              /** tin: Bail - ignore usingFor BaseType in simpleGraph
               variableType = tempStateVars[object];
+              */
+              return;
             }
           }
 
@@ -434,44 +369,19 @@ export function graph(files, options = {}) {
           variableType = variableType === 'uint' ? 'uint256' : variableType;
 
           // if variable type is not null let's replace "object" for the actual library name
-          if (variableType !== null) {
-            // Incase there is a "using for" declaration for this specific variable type we get its definition
-            if (contractUsingFor[contractName].hasOwnProperty(variableType) &&
-              functionsPerContract.hasOwnProperty(contractUsingFor[contractName][variableType])) {
-
-              // If there were any library declarations done to all the types with "*"
-              // we will add them to the list of matching contracts
-              let contractUsingForDefinitions = new Set(...contractUsingFor[contractName][variableType]);
-              if (contractUsingFor[contractName].hasOwnProperty('*') &&
-                functionsPerContract.hasOwnProperty(contractUsingFor[contractName]['*'])) {
-                  contractUsingForDefinitions = new Set(...contractUsingFor[contractName][variableType], ...contractUsingFor[contractName]['*']);
-              }
-
-              // check which usingFor contract the method resolves to (best effort first match)
-              let matchingContracts = [...contractUsingForDefinitions].filter(contract => functionsPerContract[contract].includes(name));
-            
-              if(matchingContracts.length > 0){
-                // we found at least one matching contract. use the first. don't know what to do if multiple are matching :/
-                if (!options.libraries) {
-                  object = matchingContracts[0];
-                } else {
-                  return;
-                }
-              }
-            }
-          // In case there is not, we can just shortcircuit the search to only the "*" variable type, incase it exists
-          } else if (contractUsingFor[contractName].hasOwnProperty('*') &&
-          functionsPerContract.hasOwnProperty(contractUsingFor[contractName]['*'])) {
-            // check which usingFor contract the method resolves to (best effort first match)
-            let matchingContracts = [...contractUsingFor[contractName]['*']].filter(contract => functionsPerContract[contract].includes(name));
-            
-            if(matchingContracts.length > 0){
-              // we found at least one matching contract. use the first. don't know what to do if multiple are matching :/
-              if (!options.libraries) {
-                object = matchingContracts[0];
-              } else {
-                return;
-              }
+          if(
+            variableType !== null &&
+            contractUsingFor[contractName].hasOwnProperty(variableType) &&
+            functionsPerContract
+              .hasOwnProperty(contractUsingFor[contractName][variableType]) &&
+            functionsPerContract[
+              contractUsingFor[contractName][variableType]
+            ].includes(name)
+          ) {
+            if(!options.libraries) {
+              object = contractUsingFor[contractName][variableType];
+            } else {
+              return;
             }
           }
           // END
@@ -484,7 +394,7 @@ export function graph(files, options = {}) {
           } else if (object === 'super') {
             // "super" in this context is gonna be the 2nd element of the dependencies array
             // since the first is the contract itself
-            localContractName = dependencies[contractName][1];
+            localContractName = dependencies[localContractName][1];
           } else if (tempUserDefinedStateVars[object] !== undefined) {
             localContractName = tempUserDefinedStateVars[object];
           } else if (userDefinedLocalVars[object] !== undefined) {
@@ -497,39 +407,45 @@ export function graph(files, options = {}) {
           return;
         }
 
-        let externalCluster;
+        let externalNode;
 
-        if(!(externalCluster = digraph.getCluster(`"cluster${localContractName}"`))) {
-          externalCluster = digraph.addCluster(`"cluster${localContractName}"`);
+        if(!(externalNode = digraph.getNode(localContractName))) {
+          externalNode = digraph.addNode(localContractName);
 
-          externalCluster.set('label', localContractName);
-          externalCluster.set('color', colorScheme.contract.undefined.color);
+          externalNode.set('label', localContractName);
+          externalNode.set('color', colorScheme.contract.undefined.color);
           if(colorScheme.contract.undefined.fontcolor){
-            externalCluster.set('fontcolor', colorScheme.contract.undefined.fontcolor);
+            externalNode.set('fontcolor', colorScheme.contract.undefined.fontcolor);
           }
           if(colorScheme.contract.undefined.style){
-            externalCluster.set('style', colorScheme.contract.undefined.style || "filled");
-            colorScheme.contract.undefined.bgcolor && externalCluster.set('bgcolor', colorScheme.contract.undefined.bgcolor );
+            externalNode.set('style', colorScheme.contract.undefined.style || "filled");
+            /* tin: node.bgcolor is not allowed */
+            //colorScheme.contract.undefined.bgcolor && externalNode.set('bgcolor', colorScheme.contract.undefined.bgcolor );
           } 
         }
         
 
-        let localNodeName = nodeName(name, localContractName);
-
-        if (!digraph.getNode(localNodeName) && externalCluster) {
-          let _opts = {
-            label: name
-          };
-          if(colorScheme.event && eventDefinitions.includes(name)){
-            //emit event
-            _opts.color = colorScheme.event.color;
-            _opts.shape = colorScheme.event.shape;
-            _opts.style = colorScheme.event.style;
-          }
-          externalCluster.addNode(localNodeName, _opts);
+        if (!digraph.getNode(localContractName) && externalNode) {
+          digraph.addNode(localContractName, { label: name});
         }
-
-        digraph.addEdge(callingScope, localNodeName, opts);
+      
+        let nodeExists = false;
+        let edges = digraph.edges;
+        for (let edge of edges) {
+          if( callingScope == edge.nodeOne.id && externalNode.id == edge.nodeTwo.id) {
+            nodeExists = true;
+            break;
+          }
+          // debugger;
+          // console.log(callingScope, edge.nodeOne.id);
+          // console.log(externalNode.id, edge.nodeTwo.id);
+          // console.log(nodeExists)
+        }
+        // digraph.addEdge(callingScope, externalNode, opts);
+        if (!nodeExists) { 
+          // console.log('adding', callingScope, externalNode.id);
+          digraph.addEdge(callingScope, externalNode.id, opts) 
+        }
       }
     });
   }
@@ -568,6 +484,7 @@ key:i1:e -> key2:i1:w [color="${colorScheme.call.regular}"]
 key:i2:e -> key2:i2:w [color="${colorScheme.call.default}"]
 }
 `;
+  debugger;
   let finalDigraph = utils.insertBeforeLastOccurrence(digraph.to_dot(), '}', legendDotString);
 
   return finalDigraph;
