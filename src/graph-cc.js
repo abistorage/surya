@@ -5,7 +5,7 @@ import { type } from 'os';
 const parserHelpers = require('./utils/parserHelpers')
 const utils = require('./utils/utils')
 const fs = require('fs')
-const parser = require('solidity-parser-antlr')
+const parser = require('@solidity-parser/parser')
 const graphviz = require('graphviz')
 const { linearize } = require('c3-linearization')
 
